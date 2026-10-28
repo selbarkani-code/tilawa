@@ -1,4 +1,4 @@
-# Tilāwa — révision du Coran (v1)
+# Tilāwa — révision du Coran  (v1)
 
 Application web installable sur iPhone. Elle écoute ta récitation (riwāya Ḥafṣ ʿan ʿĀṣim) et signale les mots erronés, oubliés ou sautés. Tout est analysé sur le téléphone, hors ligne après le premier téléchargement.
 

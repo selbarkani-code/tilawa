@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tilāwa</title>
+<meta name="theme-color" content="#0e3d2e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Tilāwa">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Amiri+Quran&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ============ Écran 1 : choix du passage ============ -->
+<main id="setup" class="screen active">
+  <header class="brand">
+    <div class="brand-mark" aria-hidden="true">تلاوة</div>
+    <h1>Tilāwa</h1>
+    <p class="sub">Récite, l'app t'écoute et te signale tes erreurs. Riwāya Ḥafṣ ʿan ʿĀṣim.</p>
+  </header>
+
+  <section class="card" id="modelCard">
+    <div class="model-row">
+      <div>
+        <div class="label">Modèle vocal</div>
+        <div id="modelStatus" class="model-status">Non téléchargé</div>
+      </div>
+      <button id="modelBtn" class="btn small">Télécharger</button>
+    </div>
+    <div id="modelBar" class="bar hidden"><span></span></div>
+    <p id="modelHint" class="hint">Environ 100 à 200 Mo, à télécharger une seule fois, de préférence en Wi-Fi. Ensuite tout fonctionne hors ligne, sur ton iPhone.</p>
+  </section>
+
+  <section class="card">
+    <label class="label" for="sura">Sourate</label>
+    <select id="sura"></select>
+
+    <div class="range">
+      <div>
+        <label class="label" for="from">Du verset</label>
+        <input id="from" type="number" inputmode="numeric" min="1" value="1">
+      </div>
+      <div>
+        <label class="label" for="to">Au verset</label>
+        <input id="to" type="number" inputmode="numeric" min="1" value="7">
+      </div>
+    </div>
+
+    <div class="label">Mode</div>
+    <div class="segmented" role="radiogroup">
+      <button data-mode="revision" class="seg active" role="radio" aria-checked="true">
+        <strong>Révision</strong><span>Le texte est affiché</span>
+      </button>
+      <button data-mode="hifz" class="seg" role="radio" aria-checked="false">
+        <strong>Ḥifẓ</strong><span>Le texte se révèle au fil de ta récitation</span>
+      </button>
+    </div>
+  </section>
+
+  <button id="startBtn" class="btn primary wide">Commencer</button>
+  <p class="foot">Le son de ta voix est analysé sur ton téléphone et n'est jamais envoyé ailleurs.</p>
+</main>
+
+<!-- ============ Écran 2 : récitation ============ -->
+<main id="recite" class="screen">
+  <header class="topbar">
+    <button id="backBtn" class="icon-btn" aria-label="Retour">
+      <svg viewBox="0 0 24 24" width="22" height="22"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="topbar-title">
+      <div id="suraTitle" class="sura-title"></div>
+      <div id="suraMeta" class="sura-meta"></div>
+    </div>
+    <div id="progressPill" class="pill">0 %</div>
+  </header>
+
+  <div id="mushaf" class="mushaf" dir="rtl" lang="ar"></div>
+
+  <footer class="dock">
+    <div class="dock-info">
+      <div id="statusLine" class="status-line">Touche le micro et commence à réciter</div>
+      <div id="heardLine" class="heard-line" dir="rtl" lang="ar"></div>
+    </div>
+    <div class="dock-controls">
+      <button id="hintBtn" class="btn ghost small">Indice</button>
+      <button id="micBtn" class="mic" aria-label="Commencer l'écoute">
+        <span class="ring" id="micRing"></span>
+        <svg viewBox="0 0 24 24" width="30" height="30" class="ico-mic"><rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <svg viewBox="0 0 24 24" width="26" height="26" class="ico-stop"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor"/></svg>
+      </button>
+      <button id="finishBtn" class="btn ghost small">Bilan</button>
+    </div>
+  </footer>
+</main>
+
+<!-- ============ Fiche mot ============ -->
+<div id="sheetBackdrop" class="backdrop hidden"></div>
+<div id="wordSheet" class="sheet hidden" role="dialog" aria-modal="true">
+  <div class="grabber"></div>
+  <div id="wsWord" class="ws-word" dir="rtl" lang="ar"></div>
+  <div id="wsInfo" class="ws-info"></div>
+  <div class="sheet-actions">
+    <button id="wsReveal" class="btn ghost">Révéler</button>
+    <button id="wsResume" class="btn primary">Reprendre ici</button>
+  </div>
+</div>
+
+<!-- ============ Bilan ============ -->
+<div id="summarySheet" class="sheet tall hidden" role="dialog" aria-modal="true">
+  <div class="grabber"></div>
+  <h2>Bilan</h2>
+  <div id="sumStats" class="stats"></div>
+  <div id="sumList" class="sum-list"></div>
+  <div class="sheet-actions">
+    <button id="sumContinue" class="btn ghost">Continuer</button>
+    <button id="sumRestart" class="btn primary">Recommencer</button>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

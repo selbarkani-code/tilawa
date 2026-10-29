@@ -50,6 +50,7 @@ worker.onmessage = (e) => {
     setModel(m.text);
   } else if (m.type === 'ready') {
     S.modelReady = true;
+    D.engine = `${m.device} ${m.dtype}`;
     store.set('modelDownloaded', true);
     setModel(m.device === 'webgpu' ? 'Prêt (accélération GPU)' : 'Prêt', 'ready');
     $('#modelBar').classList.add('hidden');
@@ -58,6 +59,7 @@ worker.onmessage = (e) => {
     updateMic();
     if (!S.listening) setStatus('Touche le micro et commence à réciter');
   } else if (m.type === 'error') {
+    D.err = m.message;
     setModel('Échec du chargement', 'error');
     $('#modelBtn').classList.remove('hidden');
     $('#modelBtn').disabled = false;
@@ -269,6 +271,20 @@ function handleTranscript(text) {
 let audioCtx = null, stream = null, node = null, src = null, sink = null, wakeLock = null;
 const SR = 16000, FRAME = 320; // trames de 20 ms
 const vad = {};
+// Diagnostic (touche la ligne d'état pour l'afficher)
+const D = { sent: 0, recv: 0, rate: 0, chunks: 0, zero: 0, rms: 0, thr: 0, ms: 0, raw: '', err: '', capture: '', engine: '' };
+function diag() {
+  const el = $('#diag'); if (!el || el.classList.contains('hidden')) return;
+  const lvl = D.thr ? Math.min(10, Math.round((D.rms / D.thr) * 3)) : 0;
+  el.textContent = [
+    `Moteur : ${D.engine || 'non chargé'}`,
+    `Micro : ${D.capture || '—'} · ${D.rate || '—'} Hz · blocs ${D.chunks} (muets ${D.zero})`,
+    `Niveau : ${'▮'.repeat(lvl)}${'▯'.repeat(10 - lvl)}  (${D.rms.toFixed(4)} / seuil ${D.thr.toFixed(4)})`,
+    `Segments envoyés : ${D.sent} · analysés : ${D.recv}${D.ms ? ' · ' + D.ms + ' ms' : ''}`,
+    `Dernier texte : ${D.raw || '—'}`,
+    D.err ? `Erreur : ${D.err}` : '',
+  ].filter(Boolean).join('\n');
+}
 function resetVad() {
   Object.assign(vad, {
     pos: 0, frame: new Float32Array(FRAME), fi: 0,
@@ -290,31 +306,46 @@ function updateMic() {
   }
 }
 
+$('#statusLine').addEventListener('click', () => { $('#diag').classList.toggle('hidden'); diag(); });
 $('#micBtn').addEventListener('click', () => (S.listening ? stopListening(false) : startListening()));
 
 async function startListening() {
   if (!S.modelReady) return;
   if (S.cursor >= S.words.length) { toast('Passage terminé. Utilise « Recommencer » dans le bilan.'); return; }
-  // Le contexte audio doit être créé pendant le geste de l'utilisateur (exigence de Safari)
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   try {
     stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true, channelCount: 1 },
     });
-  } catch {
-    audioCtx.close(); audioCtx = null;
+  } catch (err) {
     toast('Accès au micro refusé. Autorise-le dans Réglages › Safari › Micro.', 4000);
+    D.err = 'micro : ' + (err?.message || err); diag();
     return;
   }
-  await audioCtx.resume();
-  await audioCtx.audioWorklet.addModule('./recorder-worklet.js');
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  try { await audioCtx.resume(); } catch { /* ignore */ }
   src = audioCtx.createMediaStreamSource(stream);
-  node = new AudioWorkletNode(audioCtx, 'recorder');
   sink = audioCtx.createGain(); sink.gain.value = 0;
-  src.connect(node); node.connect(sink); sink.connect(audioCtx.destination);
   resetVad();
-  node.port.onmessage = (e) => feed(e.data);
+  D.rate = audioCtx.sampleRate; D.chunks = 0; D.zero = 0;
+  try {
+    await audioCtx.audioWorklet.addModule('./recorder-worklet.js');
+    node = new AudioWorkletNode(audioCtx, 'recorder');
+    node.port.onmessage = (e) => feed(e.data);
+    D.capture = 'worklet';
+  } catch {
+    // Repli : ancienne API, toujours prise en charge par Safari
+    node = audioCtx.createScriptProcessor(4096, 1, 1);
+    node.onaudioprocess = (e) => feed(new Float32Array(e.inputBuffer.getChannelData(0)));
+    D.capture = 'script';
+  }
+  src.connect(node); node.connect(sink); sink.connect(audioCtx.destination);
   S.listening = true; S.stopping = false;
+  // Surveillance : si aucun son n'arrive, on le dit au lieu de rester muet
+  setTimeout(() => {
+    if (!S.listening) return;
+    if (D.chunks === 0) setStatus('Le micro ne transmet rien. Ferme l’app et rouvre-la.', true);
+    else if (D.zero === D.chunks) setStatus('Le micro renvoie du silence. Vérifie qu’aucune autre app ne l’utilise.', true);
+  }, 2500);
   try { wakeLock = await navigator.wakeLock?.request('screen'); } catch { /* ignore */ }
   updateMic();
   setStatus('J’écoute…');
@@ -325,7 +356,7 @@ async function stopListening(silent) {
   S.listening = false;
   if (vad.speaking && vad.speech > 20) emit(vad.seg);
   vad.speaking = false;
-  try { node?.port && (node.port.onmessage = null); src?.disconnect(); node?.disconnect(); } catch { /* ignore */ }
+  try { if (node?.port) node.port.onmessage = null; if (node) node.onaudioprocess = null; src?.disconnect(); node?.disconnect(); } catch { /* ignore */ }
   stream?.getTracks().forEach((t) => t.stop());
   try { await audioCtx?.close(); } catch { /* ignore */ }
   audioCtx = stream = node = src = sink = null;
@@ -342,6 +373,9 @@ async function stopListening(silent) {
 // Rééchantillonnage vers 16 kHz (moyenne sur chaque pas)
 function feed(chunk) {
   if (!audioCtx) return;
+  D.chunks++;
+  let any = false; for (let k = 0; k < chunk.length; k += 16) if (chunk[k] !== 0) { any = true; break; }
+  if (!any) D.zero++;
   const step = audioCtx.sampleRate / SR;
   let p = vad.pos;
   while (p + step <= chunk.length) {
@@ -358,14 +392,17 @@ function feed(chunk) {
 function processFrame(f) {
   let e = 0; for (let k = 0; k < f.length; k++) e += f[k] * f[k];
   const rms = Math.sqrt(e / f.length);
-  if (vad.noise === null) {
-    vad.calib.push(rms);
-    if (vad.calib.length >= 12) vad.noise = vad.calib.sort((a, b) => a - b)[6] || 0.002;
-    return;
+  // Bruit de fond : 10e centile des 3 dernières secondes
+  vad.calib.push(rms); if (vad.calib.length > 150) vad.calib.shift();
+  if (vad.calib.length % 10 === 0) {
+    const sorted = [...vad.calib].sort((a, b) => a - b);
+    vad.noise = sorted[Math.floor(sorted.length * 0.1)];
   }
-  const thr = Math.max(vad.noise * 3, 0.006);
+  if (vad.noise === null) return;
+  const thr = Math.max(vad.noise * 2.5, 0.0025);
   const isSpeech = rms > thr;
-  if (!isSpeech && !vad.speaking) vad.noise = vad.noise * 0.97 + rms * 0.03;
+  D.rms = rms; D.thr = thr;
+  if ((D.tick = (D.tick || 0) + 1) % 10 === 0) diag();
   $('#micRing').style.transform = `scale(${1 + Math.min(0.35, (rms / thr) * 0.08)})`;
 
   if (!vad.speaking) {
@@ -393,6 +430,7 @@ function emit(frames) {
   for (let k = 0; k < out.length; k++) peak = Math.max(peak, Math.abs(out[k]));
   if (peak > 0 && peak < 0.5) { const g = 0.8 / peak; for (let k = 0; k < out.length; k++) out[k] *= g; }
   vad.speech = 0;
+  D.sent++; diag();
   enqueue(out);
 }
 
@@ -407,7 +445,9 @@ async function pump() {
   while (queue.length) {
     if (S.listening) setStatus('Analyse…');
     const res = await transcribe(queue.shift());
-    if (res.error) console.warn(res.error);
+    D.recv++; D.ms = res.ms; D.raw = res.text || '(vide)';
+    if (res.error) { D.err = res.error; setStatus('Erreur du modèle vocal (voir diagnostic)', true); }
+    diag();
     handleTranscript(res.text || '');
   }
   busy = false;

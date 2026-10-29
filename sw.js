@@ -1,6 +1,6 @@
 // Service worker : garde l'app, ses bibliothèques et la police en cache pour l'usage hors ligne.
 // (Les fichiers du modèle vocal sont mis en cache directement par la bibliothèque, dans le worker.)
-const VERSION = 'tilawa-v1';
+const VERSION = 'tilawa-v2';
 const EXT = 'tilawa-ext'; // bibliothèques externes, conservées entre les versions
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'align.js', 'asr-worker.js',
   'recorder-worklet.js', 'quran.json', 'manifest.json', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
@@ -22,11 +22,15 @@ self.addEventListener('fetch', (e) => {
   if (/huggingface\.co|hf\.co|xethub/.test(url.hostname)) return; // géré par la bibliothèque
 
   if (url.origin === self.location.origin) {
-    // L'app : cache d'abord, mise à jour en arrière-plan
+    // L'app : réseau d'abord (pour recevoir les mises à jour), cache si hors ligne
     e.respondWith(caches.open(VERSION).then(async (cache) => {
-      const hit = await cache.match(req, { ignoreSearch: true });
-      const net = fetch(req).then((res) => { if (res.ok) cache.put(req, res.clone()); return res; }).catch(() => hit);
-      return hit || net;
+      try {
+        const res = await fetch(req, { cache: 'no-cache' });
+        if (res.ok) cache.put(req, res.clone());
+        return res;
+      } catch {
+        return (await cache.match(req, { ignoreSearch: true })) || Response.error();
+      }
     }));
     return;
   }
